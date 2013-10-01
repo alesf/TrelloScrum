@@ -19,7 +19,7 @@
 */
 
 //default story point picker sequence
-var _pointSeq = ['?', 0, .5, 1, 2, 3, 5, 8, 13, 21];
+var _pointSeq = [.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8];
 //attributes representing points values for card
 var _pointsAttr = ['cpoints', 'points'];
 
@@ -35,13 +35,13 @@ function round(_val) {return (Math.floor(_val * 100) / 100)};
 //what to do when DOM loads
 $(function(){
 	//watch filtering
-	$('.js-toggle-label-filter, .js-select-member, .js-due-filter, .js-clear-all').live('mouseup', calcListPoints);
-	$('.js-input').live('keyup', calcListPoints);
+	$(document).on('mouseup', '.js-toggle-label-filter, .js-select-member, .js-due-filter, .js-clear-all', calcListPoints);
+	$(document).on('keyup', '.js-input', calcListPoints);
 
 	//for storypoint picker
-	$(".card-detail-title .edit-controls").live('DOMNodeInserted',showPointPicker);
+	$(document).on('DOMNodeInserted', '.card-detail-title .edit-controls', showPointPicker);
 
-	$('.js-share').live('mouseup',function(){
+	$(document).on('mouseup', '.js-share', function(){
 		setTimeout(checkExport,500)
 	});
 
@@ -216,7 +216,7 @@ function showPointPicker() {
 		var text = $text.val();
 
 		// replace our new
-		$text[0].value=text.match(reg)?text.replace(reg, '('+value+') '):'('+value+') ' + text;
+		$text[0].value=text.match(regC)?text.replace(regC, '['+value+'] '):'['+value+'] ' + text;
 
 		// then click our button so it all gets saved away
 		$(".card-detail-title .edit .js-save-edit").click();
