@@ -9,7 +9,7 @@
 			"css": ["trelloscrum.css"]
 		}
 	],
-	"manifest_version" : 1,
+	"manifest_version" : 2,
     "icons": { "128": "trello-scrum-icon.png" },
     "web_accessible_resources": [
 	    "images/storypoints-icon.png",
