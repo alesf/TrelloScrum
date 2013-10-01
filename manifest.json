@@ -1,15 +1,15 @@
 {
-	"name": "Scrum for Trello",
-	"version": "1.41",
-	"description": "Adds Scrum to your Trello",
+	"name": "Time tracking for Trello",
+	"version": "1",
+	"description": "Time tracking for T based on TrelloScrum found on https://github.com/Q42/TrelloScrum",
 	"content_scripts": [
 		{
 			"matches": ["https://trello.com/*"],
-			"js": ["jquery-1.7.1.min.js","trelloscrum.js"],
+			"js": ["trelloscrum.js"],
 			"css": ["trelloscrum.css"]
 		}
 	],
-	"manifest_version" : 2,
+	"manifest_version" : 1,
     "icons": { "128": "trello-scrum-icon.png" },
     "web_accessible_resources": [
 	    "images/storypoints-icon.png",
