@@ -1,22 +1,25 @@
-/*
-** Scrum for Trello- https://github.com/Q42/TrelloScrum
-** Adds Scrum to your Trello
-**
-** Original:
-** Jasper Kaizer <https://github.com/jkaizer>
-** Marcel Duin <https://github.com/marcelduin>
-**
-** Contribs:
-** Paul Lofte <https://github.com/paullofte>
-** Nic Pottier <https://github.com/nicpottier>
-** Bastiaan Terhorst <https://github.com/bastiaanterhorst>
-** Morgan Craft <https://github.com/mgan59>
-** Frank Geerlings <https://github.com/frankgeerlings>
-** Cedric Gatay <https://github.com/CedricGatay>
-** Kit Glennon <https://github.com/kitglen>
-** Samuel Gaus <https://github.com/gausie>
-**
-*/
+// Thanks @unscriptable - http://unscriptable.com/2009/03/20/debouncing-javascript-methods/
+var debounce = function (func, threshold, execAsap) {
+    var timeout;
+    return function debounced () {
+    	var obj = this, args = arguments;
+		function delayed () {
+			if (!execAsap)
+				func.apply(obj, args);
+			timeout = null; 
+		};
+
+		if (timeout)
+			clearTimeout(timeout);
+		else if (execAsap)
+			func.apply(obj, args);
+
+		timeout = setTimeout(delayed, threshold || 100); 
+	};
+}
+
+// For MutationObserver
+var obsConfig = { childList: true, characterData: true, attributes: false, subtree: true };
 
 //default story point picker sequence
 var _pointSeq = [.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8];
@@ -26,34 +29,96 @@ var _pointsAttr = ['cpoints', 'points'];
 
 //internals
 var reg = /((?:^|\s))\((\x3f|\d*\.?\d+)(\))\s?/m, //parse regexp- accepts digits, decimals and '?', surrounded by ()
-	regC = /((?:^|\s))\[(\x3f|\d*\.?\d+)(\])\s?/m, //parse regexp- accepts digits, decimals and '?', surrounded by []
-	iconUrl = chrome.extension.getURL('images/storypoints-icon.png'),
-	pointsDoneUrl = chrome.extension.getURL('images/points-done.png');
+    regC = /((?:^|\s))\[(\x3f|\d*\.?\d+)(\])\s?/m, //parse regexp- accepts digits, decimals and '?', surrounded by []
+    iconUrl,
+    pointsDoneUrl;
+
+iconUrl = 'https://raw.github.com/Q42/TrelloScrum/master/images/storypoints-icon.png';
+pointsDoneUrl = 'https://raw.github.com/Q42/TrelloScrum/master/images/points-done.png';
 
 function round(_val) {return (Math.floor(_val * 100) / 100)};
+
+// Some browsers have serious errors with MutationObserver (eg: Safari doesn't have it called MutationObserver).
+var CrossBrowser = {
+	init: function(){
+		this.MutationObserver = window.MutationObserver || window.WebKitMutationObserver || window.MozMutationObserver || null;
+	}
+};
+CrossBrowser.init();
 
 //what to do when DOM loads
 $(function(){
 	//watch filtering
+	function updateFilters() {
+		setTimeout(calcListPoints);
+	};
 	$(document).on('mouseup', '.js-toggle-label-filter, .js-select-member, .js-due-filter, .js-clear-all', calcListPoints);
 	$(document).on('keyup', '.js-input', calcListPoints);
-
-	//for storypoint picker
-	$(document).on('DOMNodeInserted', '.card-detail-title .edit-controls', showPointPicker);
-
 	$(document).on('mouseup', '.js-share', function(){
 		setTimeout(checkExport,500)
 	});
 
 	calcListPoints();
-
 });
 
-document.body.addEventListener('DOMNodeInserted',function(e){
-	if(e.target.id=='board') setTimeout(calcListPoints);
-	else if($(e.target).hasClass('board-name')) computeTotal();
-	else if($(e.target).hasClass('list')) calcListPoints();
+// Recalculates every card and its totals (used for significant DOM modifications).
+var recalcListAndTotal = debounce(function($el){
+    ($el||$('.list')).each(function(){
+		if(!this.list) new List(this);
+		else if(this.list.refreshList){
+			this.list.refreshList(); // make sure each card's points are still accurate (also calls list.calc()).
+		}
+	})
+}, 500, false);
+
+var recalcTotalsObserver = new CrossBrowser.MutationObserver(function(mutations)
+{	
+	// Determine if the mutation event included an ACTUAL change to the list rather than
+	// a modification caused by this extension making an update to points, etc. (prevents
+	// infinite recursion).
+	var doFullRefresh = false;
+	var refreshJustTotals = false;
+	$.each(mutations, function(index, mutation){
+		var $target = $(mutation.target);
+
+		// Ignore a bunch of known cases that send mutation events which don't require us to recalcListAndTotal.
+		if(! ($target.hasClass('list-total')
+			  || $target.hasClass('list-title')
+			  || $target.hasClass('date') // the 'time-ago' functionality changes date spans every minute
+			  || $target.hasClass('js-phrase') // this is constantly updated by Trello, but doesn't affect estimates.
+              || $target.hasClass('member')
+              || $target.hasClass('clearfix')
+              || $target.hasClass('badges')
+			  || $target.hasClass('header-btn-text')
+              || (typeof mutation.target.className == "undefined")
+			  ))
+		{
+			if($target.hasClass('badge')){
+                if(!$target.hasClass("consumed")){
+    				refreshJustTotals = true;
+                }
+			} else {
+				// It appears this was an actual modification and not a recursive notification.
+				doFullRefresh = true;
+			}
+		}
+	});
+	
+	if(doFullRefresh){
+		recalcListAndTotal();
+	} else if(refreshJustTotals){
+		calcListPoints();
+	}
+    
+    $editControls = $(".card-detail-title .edit-controls");
+    if($editControls.length > 0)
+    {
+        showPointPicker($editControls.get(0));
+    }
 });
+recalcTotalsObserver.observe(document.body, obsConfig);
+
+var ignoreClicks = function(){ return false; };
 
 //calculate board totals
 var ctto;
@@ -63,7 +128,7 @@ function computeTotal(){
 		var $title = $('#board-header');
 		var $total = $title.children('.list-total').empty();
 		if ($total.length == 0)
-			$total = $('<span class="list-total">').appendTo($title);
+			$total = $('<span/>', {class: "list-total"}).appendTo($title);
 
 		for (var i in _pointsAttr){
 			var score = 0,
@@ -71,7 +136,8 @@ function computeTotal(){
 			$('#board .list-total .'+attr).each(function(){
 				score+=parseFloat(this.textContent)||0;
 			});
-			$total.append('<span class="'+attr+'">'+(round(score)||'')+'</span>');
+			var scoreSpan = $('<span/>', {class: attr}).text(round(score)||'');
+			$total.append(scoreSpan);
 		}
 	});
 };
@@ -112,26 +178,74 @@ function List(el){
 		});
 	};
 
-	this.calc = function(e){
-		if(e&&e.target&&!$(e.target).hasClass('list-card')) return;
+	// All calls to calc are throttled to happen no more than once every 500ms (makes page-load and recalculations much faster).
+	var self = this;
+	this.calc = debounce(function(){
+		self._calcInner();
+    }, 500, true); // executes right away unless over its 500ms threshold since the last execution
+	this._calcInner	= function(e){ // don't call this directly. Call calc() instead.
+		//if(e&&e.target&&!$(e.target).hasClass('list-card')) return; // TODO: REMOVE - What was this? We never pass a param into this function.
 		clearTimeout(to);
 		to = setTimeout(function(){
 			$total.empty().appendTo($list.find('.list-title'));
 			for (var i in _pointsAttr){
 				var score=0,
 					attr = _pointsAttr[i];
-				$list.find('.list-card:not(.placeholder):visible').each(function(){
+				$list.find('.list-card:not(.placeholder)').each(function(){
 					if(!this.listCard) return;
-					if(!isNaN(Number(this.listCard[attr].points)))score+=Number(this.listCard[attr].points)
+					if(!isNaN(Number(this.listCard[attr].points))){
+						// Performance note: calling :visible in the selector above leads to noticible CPU usage.
+						if(jQuery.expr.filters.visible(this)){
+							score+=Number(this.listCard[attr].points);
+						}
+					}
 				});
 				var scoreTruncated = round(score);
-				$total.append('<span class="'+attr+'">'+(scoreTruncated>0?scoreTruncated:'')+'</span>');
+				var scoreSpan = $('<span/>', {class: attr}).text( (scoreTruncated>0) ? scoreTruncated : '' );
+				$total.append(scoreSpan);
 				computeTotal();
 			}
 		});
 	};
+    
+    this.refreshList = debounce(function(){
+    		readCard($list.find('.list-card:not(.placeholder)'));
+            this.calc(); // readCard will call this.calc() if any of the cards get refreshed.
+    }, 500, false);
 
-	$list.on('DOMNodeRemoved',this.calc).on('DOMNodeInserted',readCard);
+	var cardAddedRemovedObserver = new CrossBrowser.MutationObserver(function(mutations)
+	{
+		// Determine if the mutation event included an ACTUAL change to the list rather than
+		// a modification caused by this extension making an update to points, etc. (prevents
+		// infinite recursion).
+		$.each(mutations, function(index, mutation){
+			var $target = $(mutation.target);
+			
+			// Ignore a bunch of known elements that send mutation events.
+			if(! ($target.hasClass('list-total')
+					|| $target.hasClass('list-title')
+					|| $target.hasClass('badge-points')
+					|| $target.hasClass('badges')
+					|| (typeof mutation.target.className == "undefined")
+					))
+			{
+				var list;
+				// It appears this was an actual mutation and not a recursive notification.
+				$list = $target.closest(".list");
+				if($list.length > 0){
+					list = $list.get(0).list;
+					if(!list){
+						list = new List(mutation.target);
+					}
+					if(list){
+						list.refreshList(); // debounced, so its safe to call this multiple times for the same list in this loop.
+					}
+				}
+			}
+		});
+	});
+
+    cardAddedRemovedObserver.observe($list.get(0), obsConfig);
 
 	setTimeout(function(){
 		readCard($list.find('.list-card'));
@@ -155,42 +269,63 @@ function ListCard(el, identifier){
 		parsed,
 		that=this,
 		busy=false,
-		ptitle='',
 		$card=$(el),
 		$badge=$('<div class="badge badge-points point-count" style="background-image: url('+iconUrl+')"/>'),
 		to,
 		to2;
 
-	this.refresh=function(){
+	// MutationObservers may send a bunch of similar events for the same card (also depends on browser) so
+	// refreshes are debounced now.
+	var self = this;
+	this.refresh = debounce(function(){
+		self._refreshInner();
+    }, 250, true); // executes right away unless over its 250ms threshold
+	this._refreshInner=function(){
 		if(busy) return;
 		busy = true;
 		clearTimeout(to);
 		to = setTimeout(function(){
 			var $title=$card.find('a.list-card-title');
 			if(!$title[0])return;
-			var title=$title[0].childNodes[1].textContent;
-			if(title) el._title = title;
-			if(title!=ptitle) {
-				ptitle = title;
-				parsed=title.match(regexp);
+			var titleTextContent = $title[0].childNodes[1].textContent;
+			if(titleTextContent) el._title = titleTextContent;
+			
+			// Get the stripped-down (parsed) version without the estimates, that was stored after the last change.
+			var parsedTitle = $title.data('parsed-title'); 
+			if(titleTextContent != parsedTitle){
+				// New card title, so we have to parse this new info to find the new amount of points.
+				parsed=titleTextContent.match(regexp);
+				points=parsed?parsed[2]:-1;
+			} else {
+				// Title text has already been parsed... process the pre-parsed title to get the correct points.
+				var origTitle = $title.data('orig-title');
+				parsed=origTitle.match(regexp);
 				points=parsed?parsed[2]:-1;
 			}
+
 			clearTimeout(to2);
 			to2 = setTimeout(function(){
+				// Add the badge (for this point-type: regular or consumed) to the badges div.
 				$badge
 					.text(that.points)
 					[(consumed?'add':'remove')+'Class']('consumed')
 					.attr({title: 'This card has '+that.points+ (consumed?' consumed':'')+' storypoint' + (that.points == 1 ? '.' : 's.')})
 					.prependTo($card.find('.badges'));
 
-				//only update title text and list totals once
-				if(!consumed) {
-					$title[0].childNodes[1].textContent = el._title = $.trim(el._title.replace(reg,'$1').replace(regC,'$1'));
-					var list = $card.closest('.list');
-					if(list[0]) list[0].list.calc();
+				// Update the DOM element's textContent and data if there were changes.
+				if(titleTextContent != parsedTitle){
+					$title.data('orig-title', titleTextContent); // store the non-mutilated title (with all of the estimates/time-spent in it).
+				}
+				parsedTitle = $.trim(el._title.replace(reg,'$1').replace(regC,'$1'));
+				el._title = parsedTitle;
+				$title.data('parsed-title', parsedTitle); // save it to the DOM element so that both badge-types can refer back to it.
+				$title[0].childNodes[1].textContent = parsedTitle;
+				var list = $card.closest('.list');
+				if(list[0]){
+					list[0].list.calc();
 				}
 				busy = false;
-			})
+			});
 		});
 	};
 
@@ -198,19 +333,47 @@ function ListCard(el, identifier){
 		return parsed?points:''
 	});
 
-	if(!consumed) el.addEventListener('DOMNodeInserted',function(e){
-		if(/card-short-id/.test(e.target.className) && !busy)
-			that.refresh();
+	var cardShortIdObserver = new CrossBrowser.MutationObserver(function(mutations){
+		$.each(mutations, function(index, mutation){
+			var $target = $(mutation.target);
+			if(mutation.addedNodes.length > 0){
+				$.each(mutation.addedNodes, function(index, node){
+					if($(node).hasClass('card-short-id')){
+						// Found a card-short-id added to the DOM. Need to refresh this card.
+						var listElement = $target.closest('.list').get(0);
+						if(!listElement.list) new List(listElement); // makes sure the .list in the DOM has a List object
+
+						var $card = $target.closest('.list-card');
+						if($card.length > 0){
+							var listCardHash = $card.get(0).listCard;
+							if(listCardHash){
+								// The hash contains a ListCard object for each type of points (cpoints, points, possibly more in the future).
+								$.each(_pointsAttr, function(index, pointsAttr){
+									listCardHash[pointsAttr].refresh();
+								});
+							}
+						}
+					}
+				});
+			}
+		});
 	});
+
+	// The MutationObserver is only attached once per card (for the non-consumed-points ListCard) and that Observer will make the call
+	// to update BOTH types of points-badges.
+	if(!consumed){
+		var observerConfig = { childList: true, characterData: false, attributes: false, subtree: true };
+		cardShortIdObserver.observe(el, observerConfig);
+	}
 
 	setTimeout(that.refresh);
 };
 
 //the story point picker
-function showPointPicker() {
-	if($(this).find('.picker').length) return;
-	var $picker = $('<div class="picker">').appendTo('.card-detail-title .edit-controls');
-	for (var i in _pointSeq) $picker.append($('<span class="point-value">').text(_pointSeq[i]).click(function(){
+function showPointPicker(location) {
+	if($(location).find('.picker').length) return;
+	var $picker = $('<div/>', {class: "picker"}).appendTo('.card-detail-title .edit-controls');
+	for (var i in _pointSeq) $picker.append($('<span>', {class: "point-value"}).text(_pointSeq[i]).click(function(){
 		var value = $(this).text();
 		var $text = $('.card-detail-title .edit textarea');
 		var text = $text.val();
@@ -267,7 +430,7 @@ function showExcelExport() {
 
 		var blob = new Blob([s],{type:'application/ms-excel'});
 
-		var board_title_reg = /.*\/board\/(.*)\//;
+		var board_title_reg =  /.*\/(.*)$/;
 		var board_title_parsed = document.location.href.match(board_title_reg);
 		var board_title = board_title_parsed[1];
 
@@ -290,4 +453,3 @@ function showExcelExport() {
 
 	return false
 };
-

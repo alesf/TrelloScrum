@@ -1,11 +1,11 @@
 {
 	"name": "Time tracking for Trello",
 	"version": "1",
-	"description": "Time tracking for T based on TrelloScrum found on https://github.com/Q42/TrelloScrum",
+	"description": "Time tracking for Trello based on TrelloScrum found on https://github.com/Q42/TrelloScrum",
 	"content_scripts": [
 		{
 			"matches": ["https://trello.com/*"],
-			"js": ["trelloscrum.js"],
+			"js": ["jquery-2.0.3.min.js","trelloscrum.js"],
 			"css": ["trelloscrum.css"]
 		}
 	],
